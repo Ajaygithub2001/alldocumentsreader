@@ -35,9 +35,13 @@
 </head>
 <body>
 
-<h2>Open Document by URL</h2>
+<h2>Open Document by URL or Upload File</h2>
 <input type="text" id="urlInput" placeholder="Enter document URL" />
 <button onclick="openDocument()">Open Document</button>
+
+<h3>Or Upload a Document:</h3>
+<input type="file" id="fileInput" accept=".pdf,.doc,.docx" />
+<button onclick="uploadDocument()">Upload Document</button>
 
 <div id="output"></div>
 <div id="navigation" style="display: none;">
@@ -101,6 +105,29 @@
         }
     }
 
+    function uploadDocument() {
+        const fileInput = document.getElementById('fileInput');
+        const file = fileInput.files[0];
+
+        if (!file) {
+            output.innerHTML = 'No file selected.';
+            return;
+        }
+
+        const contentType = file.type;
+        output.innerHTML = `Detected Content-Type: ${contentType}<br/>Processing uploaded file...`;
+
+        if (contentType === 'application/pdf') {
+            handlePdf(file);
+        } else if (contentType === 'application/msword') {
+            handleDoc(file);
+        } else if (contentType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+            handleDocx(file);
+        } else {
+            output.innerHTML += '<br/>Unsupported document type';
+        }
+    }
+
     function handleDoc(blob) {
         const url = URL.createObjectURL(blob);
         output.innerHTML += `<br/>Cannot display .doc file. <a href="${url}" target="_blank">Download .doc file</a>`;
@@ -127,6 +154,7 @@
             pdfDocument = pdf;
             output.innerHTML += `<br/>PDF loaded. Total pages: ${pdf.numPages}`;
             document.getElementById('navigation').style.display = 'flex';
+            currentPage = 1; // Reset to the first page
             renderPage(currentPage);
         }).catch(error => {
             output.innerHTML = `Error loading PDF: ${error.message}`;
