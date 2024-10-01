@@ -3,106 +3,153 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PDF Reader with Public Proxy</title>
+    <title>PDF Reader</title>
     <style>
-        #pdf-canvas {
-            border: 1px solid black;
-            width: 100%;
-            max-width: 800px;
-            height: auto;
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
         }
-        #download-btn {
-            margin-top: 10px;
+        #pdfContainer {
+            width: 100%;
+            height: 600px;
+            border: 1px solid #ccc;
+            overflow: auto;
+            position: relative;
+        }
+        canvas {
+            display: block;
+            margin: 0 auto;
+        }
+        #controls {
+            margin: 10px 0;
         }
     </style>
+    <!-- Include PDF.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.12.313/pdf.min.js"></script>
 </head>
 <body>
+    <h1>PDF Reader</h1>
+    <input type="text" id="pdfUrl" placeholder="Enter PDF URL" />
+    <input type="file" id="pdfFile" accept="application/pdf" />
+    <button id="loadPdf">Load PDF from URL</button>
+    <div id="message"></div>
+    <div id="pdfContainer"></div>
+    <div id="controls">
+        <button id="prev">Previous</button>
+        <button id="next">Next</button>
+    </div>
 
-<h2>Online PDF Reader</h2>
-<input type="text" id="pdf-url" placeholder="Enter PDF URL" value="https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf">
-<button id="load-pdf">Load PDF</button>
-<canvas id="pdf-canvas"></canvas>
-<br>
-<button id="download-btn" style="display:none;">Download PDF</button>
+    <script>
+        let pdfDoc = null;
+        let currentPage = 1;
+        const pdfContainer = document.getElementById('pdfContainer');
+        const messageDiv = document.getElementById('message');
+        const prevBtn = document.getElementById('prev');
+        const nextBtn = document.getElementById('next');
+        const pdfFileInput = document.getElementById('pdfFile');
+        const loadPdfButton = document.getElementById('loadPdf');
+        const pdfUrlInput = document.getElementById('pdfUrl');
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.min.js"></script>
-<script>
-    let pdfBlob;
+        // Load PDF from URL
+        loadPdfButton.addEventListener('click', async () => {
+            const pdfUrl = pdfUrlInput.value;
+            messageDiv.textContent = '';
+            pdfContainer.innerHTML = '';
 
-    document.getElementById('load-pdf').addEventListener('click', function () {
-        const urlInput = document.getElementById('pdf-url').value;
-        if (!urlInput) {
-            alert('Please provide a PDF URL');
-            return;
-        }
+            const extractedUrl = extractPdfUrl(pdfUrl);
+            if (!extractedUrl) {
+                messageDiv.textContent = 'Invalid URL. Please enter a valid PDF URL.';
+                return;
+            }
 
-        // Use All Origins proxy to fetch the PDF
-        const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(urlInput)}`;
+            const allOriginsUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(extractedUrl)}`;
 
-        // Fetch the PDF file via the All Origins proxy
-        fetch(proxyUrl)
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error(`Network response was not ok: ${response.statusText}`);
+            try {
+                const response = await fetch(allOriginsUrl);
+                const data = await response.json();
+
+                if (data && data.contents) {
+                    const pdfData = data.contents;
+                    loadPdf(pdfData);
+                    messageDiv.textContent = 'PDF loaded successfully!';
+                } else {
+                    throw new Error('Failed to load PDF content.');
                 }
-                return response.json(); // Expect JSON response containing the original content
-            })
-            .then(data => {
-                const pdfData = data.contents; // Extract the PDF data from the response
-                const blob = new Blob([pdfData], { type: 'application/pdf' }); // Create a Blob from the data
-                pdfBlob = blob; // Save the blob for downloading later
+            } catch (error) {
+                messageDiv.textContent = `Error: ${error.message}`;
+            }
+        });
 
-                // Create a URL for the fetched blob
-                const pdfUrl = URL.createObjectURL(blob);
+        // Load PDF from file
+        pdfFileInput.addEventListener('change', async (event) => {
+            const file = event.target.files[0];
+            if (file && file.type === 'application/pdf') {
+                const fileReader = new FileReader();
+                fileReader.onload = async function() {
+                    const pdfData = new Uint8Array(this.result);
+                    loadPdf(pdfData);
+                };
+                fileReader.readAsArrayBuffer(file);
+                messageDiv.textContent = 'Loading PDF...';
+            } else {
+                messageDiv.textContent = 'Please upload a valid PDF file.';
+            }
+        });
 
-                // Display the download button
-                document.getElementById('download-btn').style.display = 'inline-block';
-                document.getElementById('download-btn').addEventListener('click', () => downloadPDF());
-
-                // Load and render the PDF via PDF.js
-                const pdfjsLib = window['pdfjs-dist/build/pdf'];
-                pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.worker.min.js';
-
-                const canvas = document.getElementById('pdf-canvas');
-                const context = canvas.getContext('2d');
-
-                pdfjsLib.getDocument(pdfUrl).promise.then(function(pdfDoc_) {
-                    // Render the first page
-                    pdfDoc_.getPage(1).then(function(page) {
-                        const viewport = page.getViewport({ scale: 1.5 });
-                        canvas.height = viewport.height;
-                        canvas.width = viewport.width;
-
-                        const renderContext = {
-                            canvasContext: context,
-                            viewport: viewport
-                        };
-                        page.render(renderContext);
-                    });
-                }).catch(function (error) {
-                    console.error('Error loading PDF:', error);
-                    alert('Failed to load PDF. Please check if the URL is correct or the file is too large.');
-                });
-            })
-            .catch(error => {
-                console.error('Error fetching PDF:', error);
-                alert(`Error fetching PDF: ${error.message}`);
-            });
-    });
-
-    function downloadPDF() {
-        if (pdfBlob) {
-            const url = URL.createObjectURL(pdfBlob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'downloaded-file.pdf';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);  // Clean up
+        async function loadPdf(pdfData) {
+            try {
+                pdfDoc = await pdfjsLib.getDocument(pdfData).promise;
+                currentPage = 1;
+                renderPage(currentPage);
+                prevBtn.disabled = currentPage === 1;
+                nextBtn.disabled = currentPage >= pdfDoc.numPages;
+            } catch (error) {
+                messageDiv.textContent = `Error loading PDF: ${error.message}`;
+            }
         }
-    }
-</script>
 
+        async function renderPage(pageNum) {
+            const page = await pdfDoc.getPage(pageNum);
+            const viewport = page.getViewport({ scale: 1.5 });
+            pdfContainer.innerHTML = ''; // Clear previous pages
+
+            const canvas = document.createElement('canvas');
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+            pdfContainer.appendChild(canvas);
+
+            const context = canvas.getContext('2d');
+            const renderContext = {
+                canvasContext: context,
+                viewport: viewport
+            };
+
+            await page.render(renderContext).promise;
+
+            prevBtn.disabled = currentPage === 1;
+            nextBtn.disabled = currentPage >= pdfDoc.numPages;
+        }
+
+        prevBtn.addEventListener('click', () => {
+            if (currentPage > 1) {
+                currentPage--;
+                renderPage(currentPage);
+            }
+        });
+
+        nextBtn.addEventListener('click', () => {
+            if (currentPage < pdfDoc.numPages) {
+                currentPage++;
+                renderPage(currentPage);
+            }
+        });
+
+        function extractPdfUrl(url) {
+            // Use a regex to extract the URL from Google redirect links
+            const regex = /url=([^&]+)/;
+            const match = url.match(regex);
+            return match ? decodeURIComponent(match[1]) : null;
+        }
+    </script>
 </body>
 </html>
