@@ -3,153 +3,172 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PDF Reader</title>
+    <title>Document Viewer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.4.2/mammoth.browser.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.6.0/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.15.349/pdf.min.js"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
-            margin: 20px;
+            padding: 20px;
         }
-        #pdfContainer {
+        input, button {
+            padding: 10px;
+            margin-top: 10px;
             width: 100%;
-            height: 600px;
+        }
+        #output {
+            margin-top: 20px;
+            white-space: pre-wrap;
+        }
+        .pdf-page {
+            margin: 20px 0;
             border: 1px solid #ccc;
-            overflow: auto;
-            position: relative;
         }
-        canvas {
-            display: block;
-            margin: 0 auto;
-        }
-        #controls {
-            margin: 10px 0;
+        #navigation {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 20px;
         }
     </style>
-    <!-- Include PDF.js -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.12.313/pdf.min.js"></script>
 </head>
 <body>
-    <h1>PDF Reader</h1>
-    <input type="text" id="pdfUrl" placeholder="Enter PDF URL" />
-    <input type="file" id="pdfFile" accept="application/pdf" />
-    <button id="loadPdf">Load PDF from URL</button>
-    <div id="message"></div>
-    <div id="pdfContainer"></div>
-    <div id="controls">
-        <button id="prev">Previous</button>
-        <button id="next">Next</button>
-    </div>
 
-    <script>
-        let pdfDoc = null;
-        let currentPage = 1;
-        const pdfContainer = document.getElementById('pdfContainer');
-        const messageDiv = document.getElementById('message');
-        const prevBtn = document.getElementById('prev');
-        const nextBtn = document.getElementById('next');
-        const pdfFileInput = document.getElementById('pdfFile');
-        const loadPdfButton = document.getElementById('loadPdf');
-        const pdfUrlInput = document.getElementById('pdfUrl');
+<h2>Open Document by URL</h2>
+<input type="text" id="urlInput" placeholder="Enter document URL" />
+<button onclick="openDocument()">Open Document</button>
 
-        // Load PDF from URL
-        loadPdfButton.addEventListener('click', async () => {
-            const pdfUrl = pdfUrlInput.value;
-            messageDiv.textContent = '';
-            pdfContainer.innerHTML = '';
+<div id="output"></div>
+<div id="navigation" style="display: none;">
+    <button id="prevButton" onclick="prevPage()">Previous</button>
+    <button id="nextButton" onclick="nextPage()">Next</button>
+</div>
 
-            const extractedUrl = extractPdfUrl(pdfUrl);
-            if (!extractedUrl) {
-                messageDiv.textContent = 'Invalid URL. Please enter a valid PDF URL.';
-                return;
+<script>
+    let pdfDocument = null;
+    let currentPage = 1;
+    const output = document.getElementById('output');
+    const prevButton = document.getElementById('prevButton');
+    const nextButton = document.getElementById('nextButton');
+
+    function extractActualUrl(redirectUrl) {
+        const match = redirectUrl.match(/url=([^&]+)/);
+        return match ? decodeURIComponent(match[1]) : null;
+    }
+
+    async function openDocument() {
+        const inputUrl = document.getElementById('urlInput').value;
+        output.innerHTML = 'Extracting actual URL...';
+
+        const actualUrl = extractActualUrl(inputUrl);
+        if (!actualUrl) {
+            output.innerHTML = 'Failed to extract actual URL.';
+            return;
+        }
+
+        output.innerHTML += `<br/>Actual URL: ${actualUrl}<br/>Fetching document...`;
+
+        try {
+            // Use All Origins to avoid CORS issues
+            const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(actualUrl)}`;
+            const response = await fetch(proxyUrl);
+
+            if (!response.ok) {
+                throw new Error(`Error: ${response.statusText}`);
             }
 
-            const allOriginsUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(extractedUrl)}`;
+            const data = await response.json();
+            const blob = await (await fetch(data.contents)).blob(); // Fetch the document content as a Blob
 
-            try {
-                const response = await fetch(allOriginsUrl);
-                const data = await response.json();
+            const contentType = blob.type;
+            output.innerHTML += `Detected Content-Type: ${contentType}`;
 
-                if (data && data.contents) {
-                    const pdfData = data.contents;
-                    loadPdf(pdfData);
-                    messageDiv.textContent = 'PDF loaded successfully!';
-                } else {
-                    throw new Error('Failed to load PDF content.');
-                }
-            } catch (error) {
-                messageDiv.textContent = `Error: ${error.message}`;
-            }
-        });
-
-        // Load PDF from file
-        pdfFileInput.addEventListener('change', async (event) => {
-            const file = event.target.files[0];
-            if (file && file.type === 'application/pdf') {
-                const fileReader = new FileReader();
-                fileReader.onload = async function() {
-                    const pdfData = new Uint8Array(this.result);
-                    loadPdf(pdfData);
-                };
-                fileReader.readAsArrayBuffer(file);
-                messageDiv.textContent = 'Loading PDF...';
+            // Handle different document types
+            if (contentType === 'application/msword') {
+                handleDoc(blob);
+            } else if (contentType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+                handleDocx(blob);
+            } else if (contentType === 'application/pdf') {
+                handlePdf(blob);
             } else {
-                messageDiv.textContent = 'Please upload a valid PDF file.';
+                output.innerHTML += '<br/>Unsupported document type';
             }
-        });
 
-        async function loadPdf(pdfData) {
-            try {
-                pdfDoc = await pdfjsLib.getDocument(pdfData).promise;
-                currentPage = 1;
-                renderPage(currentPage);
-                prevBtn.disabled = currentPage === 1;
-                nextBtn.disabled = currentPage >= pdfDoc.numPages;
-            } catch (error) {
-                messageDiv.textContent = `Error loading PDF: ${error.message}`;
-            }
+            output.innerHTML += '<br/>Successful loading';
+        } catch (error) {
+            output.innerHTML = `Failed to open document: ${error.message}`;
         }
+    }
 
-        async function renderPage(pageNum) {
-            const page = await pdfDoc.getPage(pageNum);
-            const viewport = page.getViewport({ scale: 1.5 });
-            pdfContainer.innerHTML = ''; // Clear previous pages
+    function handleDoc(blob) {
+        const url = URL.createObjectURL(blob);
+        output.innerHTML += `<br/>Cannot display .doc file. <a href="${url}" target="_blank">Download .doc file</a>`;
+    }
 
-            const canvas = document.createElement('canvas');
-            canvas.height = viewport.height;
-            canvas.width = viewport.width;
-            pdfContainer.appendChild(canvas);
+    function handleDocx(blob) {
+        const reader = new FileReader();
 
-            const context = canvas.getContext('2d');
-            const renderContext = {
-                canvasContext: context,
-                viewport: viewport
-            };
+        reader.onload = async function (e) {
+            const arrayBuffer = e.target.result;
+            const result = await mammoth.extractRawText({ arrayBuffer });
+            output.innerHTML += `<br/><pre>${result.value}</pre>`;
+        };
 
-            await page.render(renderContext).promise;
+        reader.readAsArrayBuffer(blob);
+    }
 
-            prevBtn.disabled = currentPage === 1;
-            nextBtn.disabled = currentPage >= pdfDoc.numPages;
-        }
+    async function handlePdf(blob) {
+        const url = URL.createObjectURL(blob);
+        output.innerHTML += `<br/>Rendering PDF...`;
 
-        prevBtn.addEventListener('click', () => {
-            if (currentPage > 1) {
-                currentPage--;
-                renderPage(currentPage);
-            }
+        const loadingTask = pdfjsLib.getDocument(url);
+        loadingTask.promise.then(pdf => {
+            pdfDocument = pdf;
+            output.innerHTML += `<br/>PDF loaded. Total pages: ${pdf.numPages}`;
+            document.getElementById('navigation').style.display = 'flex';
+            renderPage(currentPage);
+        }).catch(error => {
+            output.innerHTML = `Error loading PDF: ${error.message}`;
         });
+    }
 
-        nextBtn.addEventListener('click', () => {
-            if (currentPage < pdfDoc.numPages) {
-                currentPage++;
-                renderPage(currentPage);
-            }
-        });
+    async function renderPage(pageNum) {
+        output.innerHTML = ''; // Clear previous content
+        const page = await pdfDocument.getPage(pageNum);
+        const viewport = page.getViewport({ scale: 1 });
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.classList.add('pdf-page');
+        canvas.height = viewport.height;
+        canvas.width = viewport.width;
 
-        function extractPdfUrl(url) {
-            // Use a regex to extract the URL from Google redirect links
-            const regex = /url=([^&]+)/;
-            const match = url.match(regex);
-            return match ? decodeURIComponent(match[1]) : null;
+        const renderContext = {
+            canvasContext: context,
+            viewport: viewport
+        };
+        await page.render(renderContext).promise;
+
+        output.appendChild(canvas);
+
+        prevButton.disabled = currentPage === 1;
+        nextButton.disabled = currentPage >= pdfDocument.numPages;
+    }
+
+    function prevPage() {
+        if (currentPage > 1) {
+            currentPage--;
+            renderPage(currentPage);
         }
-    </script>
+    }
+
+    function nextPage() {
+        if (currentPage < pdfDocument.numPages) {
+            currentPage++;
+            renderPage(currentPage);
+        }
+    }
+</script>
+
 </body>
 </html>
