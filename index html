@@ -3,132 +3,106 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Large File Document Reader (PDF.js Support)</title>
-    <script src="https://mozilla.github.io/pdf.js/build/pdf.js"></script> <!-- PDF.js library -->
+    <title>PDF Reader with Public Proxy</title>
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 20px;
-        }
-        #viewer {
+        #pdf-canvas {
+            border: 1px solid black;
             width: 100%;
-            height: 500px;
-            border: 1px solid #ccc;
-            padding: 10px;
-            overflow: auto;
+            max-width: 800px;
+            height: auto;
         }
-        canvas {
-            width: 100%;
+        #download-btn {
+            margin-top: 10px;
         }
     </style>
 </head>
 <body>
 
-    <h1>Document Reader (Large Files with PDF.js Support)</h1>
+<h2>Online PDF Reader</h2>
+<input type="text" id="pdf-url" placeholder="Enter PDF URL" value="https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf">
+<button id="load-pdf">Load PDF</button>
+<canvas id="pdf-canvas"></canvas>
+<br>
+<button id="download-btn" style="display:none;">Download PDF</button>
 
-    <div>
-        <label for="url-input">Enter Document URL:</label>
-        <input type="text" id="url-input" placeholder="Enter document URL here">
-        <button id="load-url-btn">Download and Display</button>
-    </div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.min.js"></script>
+<script>
+    let pdfBlob;
 
-    <div>
-        <label for="file-input">Select a Local File:</label>
-        <input type="file" id="file-input">
-    </div>
-
-    <div id="viewer">Document content will be displayed here...</div>
-
-    <script>
-        const viewer = document.getElementById('viewer');
-        const loadUrlBtn = document.getElementById('load-url-btn');
-        const fileInput = document.getElementById('file-input');
-
-        // Function to extract the actual URL from a redirect link
-        function extractRealUrl(redirectUrl) {
-            const urlParams = new URLSearchParams(new URL(redirectUrl).search);
-            return urlParams.get('url') || redirectUrl;  // Extract the actual URL from the redirect URL
+    document.getElementById('load-pdf').addEventListener('click', function () {
+        const urlInput = document.getElementById('pdf-url').value;
+        if (!urlInput) {
+            alert('Please provide a PDF URL');
+            return;
         }
 
-        // Function to display the PDF using PDF.js
-        function displayPDF(blob) {
-            const loadingTask = pdfjsLib.getDocument(URL.createObjectURL(blob));
-            loadingTask.promise.then(function(pdf) {
-                // Fetch the first page
-                pdf.getPage(1).then(function(page) {
-                    const scale = 1.5;
-                    const viewport = page.getViewport({ scale: scale });
+        // Use All Origins proxy to fetch the PDF
+        const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(urlInput)}`;
 
-                    // Prepare canvas using PDF page dimensions
-                    const canvas = document.createElement('canvas');
-                    const context = canvas.getContext('2d');
-                    canvas.height = viewport.height;
-                    canvas.width = viewport.width;
-                    viewer.innerHTML = ''; // Clear the viewer
-                    viewer.appendChild(canvas);
-
-                    // Render the PDF page into the canvas context
-                    const renderContext = {
-                        canvasContext: context,
-                        viewport: viewport
-                    };
-                    page.render(renderContext);
-                });
-            }, function(error) {
-                console.error('Error loading PDF:', error);
-                viewer.textContent = 'Failed to load the PDF document.';
-            });
-        }
-
-        // Function to fetch the file from a URL and display it
-        async function fetchAndDisplayFile(url) {
-            try {
-                const response = await fetch(url);
-                if (!response.ok) throw new Error("Failed to fetch the document");
-
-                const blob = await response.blob();  // Read the response as a blob
-                const contentType = response.headers.get("Content-Type");
-
-                if (contentType.includes("application/pdf")) {
-                    displayPDF(blob);  // Use PDF.js to display the PDF
-                } else {
-                    viewer.textContent = "Unsupported file type.";
+        // Fetch the PDF file via the All Origins proxy
+        fetch(proxyUrl)
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`Network response was not ok: ${response.statusText}`);
                 }
-            } catch (error) {
-                viewer.textContent = "Error downloading or displaying the document.";
-                console.error("Error:", error);
-            }
+                return response.json(); // Expect JSON response containing the original content
+            })
+            .then(data => {
+                const pdfData = data.contents; // Extract the PDF data from the response
+                const blob = new Blob([pdfData], { type: 'application/pdf' }); // Create a Blob from the data
+                pdfBlob = blob; // Save the blob for downloading later
+
+                // Create a URL for the fetched blob
+                const pdfUrl = URL.createObjectURL(blob);
+
+                // Display the download button
+                document.getElementById('download-btn').style.display = 'inline-block';
+                document.getElementById('download-btn').addEventListener('click', () => downloadPDF());
+
+                // Load and render the PDF via PDF.js
+                const pdfjsLib = window['pdfjs-dist/build/pdf'];
+                pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.worker.min.js';
+
+                const canvas = document.getElementById('pdf-canvas');
+                const context = canvas.getContext('2d');
+
+                pdfjsLib.getDocument(pdfUrl).promise.then(function(pdfDoc_) {
+                    // Render the first page
+                    pdfDoc_.getPage(1).then(function(page) {
+                        const viewport = page.getViewport({ scale: 1.5 });
+                        canvas.height = viewport.height;
+                        canvas.width = viewport.width;
+
+                        const renderContext = {
+                            canvasContext: context,
+                            viewport: viewport
+                        };
+                        page.render(renderContext);
+                    });
+                }).catch(function (error) {
+                    console.error('Error loading PDF:', error);
+                    alert('Failed to load PDF. Please check if the URL is correct or the file is too large.');
+                });
+            })
+            .catch(error => {
+                console.error('Error fetching PDF:', error);
+                alert(`Error fetching PDF: ${error.message}`);
+            });
+    });
+
+    function downloadPDF() {
+        if (pdfBlob) {
+            const url = URL.createObjectURL(pdfBlob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'downloaded-file.pdf';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);  // Clean up
         }
+    }
+</script>
 
-        // Load and display document from URL
-        loadUrlBtn.addEventListener('click', async () => {
-            let url = document.getElementById('url-input').value;
-            if (!url) {
-                alert("Please enter a valid URL");
-                return;
-            }
-
-            // Extract the real URL if it's a redirect URL
-            url = extractRealUrl(url);
-
-            // Fetch and display the file
-            fetchAndDisplayFile(url);
-        });
-
-        // Load and display document from a local file
-        fileInput.addEventListener('change', (event) => {
-            const file = event.target.files[0];
-            if (!file) return;
-
-            const fileType = file.type;
-            const blob = file;  // Create a blob directly from the selected file
-
-            if (fileType.includes("application/pdf")) {
-                displayPDF(blob);  // Use PDF.js to display the local PDF
-            } else {
-                viewer.textContent = "Unsupported file type.";
-            }
-        });
-    </script>
 </body>
 </html>
